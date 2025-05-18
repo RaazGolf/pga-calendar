@@ -2,13 +2,27 @@ import requests
 from datetime import datetime, timedelta
 from pathlib import Path
 import pytz
+import time
 
 calendar_timezone = "Europe/Berlin"
 tz = pytz.timezone(calendar_timezone)
 
-# Fetch full PGA Tour 2025 schedule
+def fetch_with_retries(url, retries=3, delay=5):
+    for attempt in range(retries):
+        try:
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
+                return response.json()
+            else:
+                print(f"HTTP Error {response.status_code} on attempt {attempt+1}")
+        except requests.exceptions.RequestException as e:
+            print(f"Attempt {attempt+1} failed: {e}")
+        time.sleep(delay)
+    raise ConnectionError(f"Failed to fetch URL after {retries} attempts: {url}")
+
+# Fetch full PGA Tour 2025 schedule with retries
 schedule_url = "https://statdata.pgatour.com/r/2025/schedule-v2.json"
-schedule = requests.get(schedule_url).json()
+schedule = fetch_with_retries(schedule_url)
 
 # Prepare calendar structure
 ics = [
@@ -19,10 +33,10 @@ ics = [
     f"X-WR-TIMEZONE:{calendar_timezone}"
 ]
 
-# Helper function to get real tee times
+# Helper function to get real tee times with retries
 def get_real_tee_window(event_id):
     try:
-        event_data = requests.get(f"https://statdata.pgatour.com/r/{event_id}/tournament.json").json()
+        event_data = fetch_with_retries(f"https://statdata.pgatour.com/r/{event_id}/tournament.json")
         rounds = event_data.get("rounds", [])
         tee_times = []
 
