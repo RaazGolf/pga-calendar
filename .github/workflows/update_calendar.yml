@@ -2,7 +2,7 @@ name: Update PGA Tour Calendar
 
 on:
   schedule:
-    - cron: '0 0 * * 0'  # Every Sunday at 00:00 UTC
+    - cron: '0 6 * * *'  # Run daily at 06:00 UTC
   workflow_dispatch:
 
 jobs:
@@ -19,17 +19,15 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install requests
+          pip install requests pytz
 
       - name: Run update script
-        run: |
-          python update_calendar.py
+        run: python update_calendar.py
 
-      - name: Commit and push changes
+      - name: Commit and push updated calendar
         run: |
-          git config user.name 'github-actions'
-          git config user.email 'github-actions@github.com'
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
           git add pga_tour_2025.ics
-          git commit -m 'Update PGA Tour calendar' || echo "No changes to commit"
+          git commit -m "Auto-update PGA Tour 2025 calendar" || echo "No changes"
           git push
