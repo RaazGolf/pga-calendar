@@ -25,25 +25,31 @@ for tournament in schedule.get("tournaments", []):
     except KeyError:
         continue
 
-# Build the ICS calendar content
-ics_content = "BEGIN:VCALENDAR\nVERSION:2.0\nCALSCALE:GREGORIAN\n"
+# Start building the ICS content
+ics_content = (
+    "BEGIN:VCALENDAR\n"
+    "VERSION:2.0\n"
+    "CALSCALE:GREGORIAN\n"
+    "METHOD:PUBLISH\n"
+    "X-WR-TIMEZONE:Europe/Berlin\n"
+)
 
 for event in events:
     start_date = datetime.strptime(event["start"], "%Y-%m-%d")
     end_date = datetime.strptime(event["end"], "%Y-%m-%d")
-    
+
     for i in range((end_date - start_date).days + 1):
         round_date = start_date + timedelta(days=i)
-        start_dt = round_date.strftime("%Y%m%dT130000Z")
-        end_dt = round_date.strftime("%Y%m%dT190000Z")
+        start_dt = round_date.strftime("%Y%m%dT150000")  # 15:00 Berlin
+        end_dt = round_date.strftime("%Y%m%dT210000")    # 21:00 Berlin
         uid = f"{event['name'].replace(' ', '')}-Round{i+1}@pga.com"
 
         ics_content += (
             "BEGIN:VEVENT\n"
             f"UID:{uid}\n"
             f"DTSTAMP:{datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}\n"
-            f"DTSTART:{start_dt}\n"
-            f"DTEND:{end_dt}\n"
+            f"DTSTART;TZID=Europe/Berlin:{start_dt}\n"
+            f"DTEND;TZID=Europe/Berlin:{end_dt}\n"
             f"SUMMARY:{event['name']} – Round {i+1}\n"
             f"LOCATION:{event['location']}\n"
             "END:VEVENT\n"
