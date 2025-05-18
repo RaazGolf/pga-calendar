@@ -3,7 +3,7 @@ name: Update PGA Tour Calendar
 on:
   schedule:
     - cron: '0 0 * * 0'  # every Sunday at 00:00 UTC
-  workflow_dispatch:     # <-- enables manual triggering
+  workflow_dispatch:     # <-- THIS colon was missing!
 
 jobs:
   update-calendar:
