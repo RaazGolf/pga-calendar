@@ -7,7 +7,7 @@ from bs4 import BeautifulSoup
 
 # Constants
 BASE_URL = "https://statdata.pgatour.com/r/2025"
-CALENDAR_FILE = "pgatour_full.ics"
+CALENDAR_FILE = "pga_tour_2025.ics"
 
 def fetch_schedule_json():
     url = f"{BASE_URL}/schedule-v2.json"
