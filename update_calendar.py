@@ -2,7 +2,7 @@ import requests
 import json
 import os
 from datetime import datetime, timedelta
-from ics import Calendar, Event
+from pga_tour_2025.ics import Calendar, Event
 from bs4 import BeautifulSoup
 
 # Constants
