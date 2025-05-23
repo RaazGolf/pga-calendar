@@ -1,98 +1,119 @@
 import requests
+import json
+import os
 from datetime import datetime, timedelta
-from pathlib import Path
-import pytz
-import time
+from ics import Calendar, Event
+from bs4 import BeautifulSoup
 
-calendar_timezone = "Europe/Berlin"
-tz = pytz.timezone(calendar_timezone)
+# Constants
+BASE_URL = "https://statdata.pgatour.com/r/2025"
+CALENDAR_FILE = "pgatour_full.ics"
 
-def fetch_with_retries(url, retries=3, delay=5):
-    for attempt in range(retries):
+def fetch_schedule_json():
+    url = f"{BASE_URL}/schedule-v2.json"
+    response = requests.get(url)
+    response.raise_for_status()
+    return response.json()
+
+def scrape_official_schedule():
+    url = "https://www.pgatour.com/schedule"
+    response = requests.get(url)
+    soup = BeautifulSoup(response.text, "html.parser")
+
+    events = []
+    for card in soup.select(".EventCard"):
         try:
-            response = requests.get(url, timeout=10)
-            if response.status_code == 200:
-                return response.json()
+            name = card.select_one(".EventCard-name").get_text(strip=True)
+            location = card.select_one(".EventCard-courseName").get_text(strip=True)
+            date_text = card.select_one(".EventCard-dates").get_text(strip=True)
+            # Parse start and end date
+            dates = date_text.replace(",", "").split("–")
+            if len(dates) == 2:
+                start_date = datetime.strptime(dates[0].strip() + " 2025", "%b %d %Y")
+                end_date = datetime.strptime(dates[1].strip() + " 2025", "%b %d %Y")
             else:
-                print(f"HTTP Error {response.status_code} on attempt {attempt+1}")
-        except requests.exceptions.RequestException as e:
-            print(f"Attempt {attempt+1} failed: {e}")
-        time.sleep(delay)
-    raise ConnectionError(f"Failed to fetch URL after {retries} attempts: {url}")
+                start_date = end_date = datetime.strptime(dates[0].strip() + " 2025", "%b %d %Y")
+            events.append({
+                "name": name,
+                "location": location,
+                "start_date": start_date,
+                "end_date": end_date
+            })
+        except Exception:
+            continue
+    return events
 
-# Fetch full PGA Tour 2025 schedule with retries
-schedule_url = "https://statdata.pgatour.com/r/2025/schedule-v2.json"
-schedule = fetch_with_retries(schedule_url)
-
-# Prepare calendar structure
-ics = [
-    "BEGIN:VCALENDAR",
-    "VERSION:2.0",
-    "CALSCALE:GREGORIAN",
-    "METHOD:PUBLISH",
-    f"X-WR-TIMEZONE:{calendar_timezone}"
-]
-
-# Helper function to get real tee times with retries
-def get_real_tee_window(event_id):
+def get_tee_times(permalink):
     try:
-        event_data = fetch_with_retries(f"https://statdata.pgatour.com/r/{event_id}/tournament.json")
-        rounds = event_data.get("rounds", [])
+        url = f"https://statdata.pgatour.com/r/2025/{permalink}/tournament.json"
+        response = requests.get(url)
+        data = response.json()
+        rounds = data.get("Rounds", [])
         tee_times = []
-
         for rnd in rounds:
-            for group in rnd.get("groups", []):
-                t_str = group.get("teeTime")
-                if t_str:
-                    dt = datetime.strptime(t_str, "%Y-%m-%dT%H:%M:%SZ")
-                    tee_times.append(dt)
-
+            times = rnd.get("TeeTimes", [])
+            if times:
+                tee_times.extend(times)
         if tee_times:
-            tee_times.sort()
-            start = tee_times[0]
-            end = tee_times[-1] + timedelta(hours=5)
-            return start, end
-    except:
-        return None, None
-    return None, None
+            times = sorted(datetime.strptime(t["TeeTime"], "%H:%M") for t in tee_times)
+            return times[0].time(), times[-1].time()
+    except Exception:
+        pass
+    return datetime.strptime("08:00", "%H:%M").time(), datetime.strptime("18:00", "%H:%M").time()
 
-# Loop through tournaments
-for tournament in schedule.get("tournaments", []):
-    try:
-        event_id = tournament["permalink"]
-        name = tournament["name"]
-        location = tournament["venue"]["longName"]
-        start = tournament["startDate"][:10]
-        end = tournament["endDate"][:10]
-    except KeyError:
-        continue
+def create_calendar(events):
+    cal = Calendar()
+    for event in events:
+        for day_offset in range((event["end_date"] - event["start_date"]).days + 1):
+            day = event["start_date"] + timedelta(days=day_offset)
+            e = Event()
+            e.name = event["name"]
+            e.begin = datetime.combine(day, event["start_time"])
+            e.end = datetime.combine(day, event["end_time"])
+            e.location = event["location"]
+            e.description = f"{event['name']} - {event['location']}"
+            cal.events.add(e)
+    return cal
 
-    start_date = datetime.strptime(start, "%Y-%m-%d")
-    end_date = datetime.strptime(end, "%Y-%m-%d")
-    num_days = (end_date - start_date).days + 1
+def merge_events(api_events, scraped_events):
+    events = []
+    used_names = set()
 
-    # Try to get real tee times
-    real_start, real_end = get_real_tee_window(event_id)
+    for tourney in api_events.get("Tournament", []):
+        name = tourney["Name"]
+        location = tourney["Venue"]
+        permalink = tourney.get("Permalink")
+        start_date = datetime.strptime(tourney["StartDate"], "%Y-%m-%d")
+        end_date = datetime.strptime(tourney["EndDate"], "%Y-%m-%d")
+        start_time, end_time = get_tee_times(permalink)
+        events.append({
+            "name": name,
+            "location": location,
+            "start_date": start_date,
+            "end_date": end_date,
+            "start_time": start_time,
+            "end_time": end_time
+        })
+        used_names.add(name)
 
-    for i in range(num_days):
-        day = start_date + timedelta(days=i)
-        if real_start and real_start.date() == day.date():
-            local_start = real_start.astimezone(tz)
-            local_end = real_end.astimezone(tz)
-        else:
-            local_start = tz.localize(datetime.combine(day, datetime.strptime("08:00", "%H:%M").time()))
-            local_end = local_start + timedelta(hours=10)
+    for e in scraped_events:
+        if e["name"] not in used_names:
+            e["start_time"] = datetime.strptime("08:00", "%H:%M").time()
+            e["end_time"] = datetime.strptime("18:00", "%H:%M").time()
+            events.append(e)
 
-        ics.append("BEGIN:VEVENT")
-        ics.append(f"UID:{name.replace(' ', '')}-R{i+1}@pga.com")
-        ics.append(f"DTSTAMP:{datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}")
-        ics.append(f"DTSTART;TZID={calendar_timezone}:{local_start.strftime('%Y%m%dT%H%M%S')}")
-        ics.append(f"DTEND;TZID={calendar_timezone}:{local_end.strftime('%Y%m%dT%H%M%S')}")
-        ics.append(f"SUMMARY:{name} – Round {i+1} ⛳")
-        ics.append(f"LOCATION:{location}")
-        ics.append("DESCRIPTION:Live or placeholder round times")
-        ics.append("END:VEVENT")
+    return events
 
-ics.append("END:VCALENDAR")
+def main():
+    print("Fetching official PGA Tour schedule and verifying completeness...")
+    api_schedule = fetch_schedule_json()
+    scraped_schedule = scrape_official_schedule()
+    all_events = merge_events(api_schedule, scraped_schedule)
+    cal = create_calendar(all_events)
 
-Path("pga_tour_2025.ics").write_text("\n".join(ics))
+    with open(CALENDAR_FILE, "w", encoding="utf-8") as f:
+        f.writelines(cal)
+    print(f"Calendar saved as {CALENDAR_FILE}")
+
+if __name__ == "__main__":
+    main()
